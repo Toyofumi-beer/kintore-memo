@@ -76,6 +76,15 @@
     -webkit-appearance: none;
   }
   input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  input[type="checkbox"] {
+    -webkit-appearance: checkbox;
+    appearance: auto;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    flex: none;
+    accent-color: var(--accent2);
+  }
   label { font-size: 11px; color: var(--sub); display: block; margin-bottom: 4px; }
   .set-row {
     display: grid;
@@ -276,7 +285,7 @@
       <div class="prog-select" id="progSelect"></div>
       <div class="prog-desc" id="progDesc"></div>
       <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sub);margin-top:10px;cursor:pointer">
-        <input type="checkbox" id="warmupToggle" style="width:auto;accent-color:var(--accent2)">
+        <input type="checkbox" id="warmupToggle">
         取込時にウォームアップを追加（20kg→50%→70%→85%）
       </label>
     </div>
