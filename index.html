@@ -29,8 +29,8 @@
   header {
     padding: calc(14px + env(safe-area-inset-top)) 16px 10px;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: 10px;
   }
   header h1 { font-size: 18px; font-weight: 700; }
   header h1 span { color: var(--accent); }
@@ -42,12 +42,13 @@
     padding: 4px;
   }
   .tabs button {
+    flex: 1;
     border: none;
     background: transparent;
     color: var(--sub);
     font-size: 13px;
     font-weight: 600;
-    padding: 6px 14px;
+    padding: 8px 6px;
     border-radius: 8px;
   }
   .tabs button.active { background: var(--accent); color: #fff; }
@@ -121,6 +122,38 @@
   .hist-sets { color: var(--sub); font-size: 13px; line-height: 1.6; }
   .hist-del { border: none; background: none; color: var(--danger); font-size: 12px; padding: 6px 0 0; }
   .empty { color: var(--sub); text-align: center; padding: 30px 0; font-size: 14px; }
+  .prog-select { display: flex; gap: 8px; margin-bottom: 12px; }
+  .prog-select button {
+    flex: 1; border: 1px solid var(--border); background: var(--card2);
+    color: var(--sub); font-size: 13px; font-weight: 700; padding: 10px 4px;
+    border-radius: 10px;
+  }
+  .prog-select button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .prog-desc { font-size: 12px; color: var(--sub); line-height: 1.6; margin-bottom: 4px; }
+  .rm-input-row { display: flex; align-items: flex-end; gap: 8px; }
+  .rm-input-row > div { flex: 1; }
+  .rm-input-row button {
+    border: 1px solid var(--border); background: var(--card2); color: var(--text);
+    font-size: 12px; font-weight: 600; padding: 10px 12px; border-radius: 10px; white-space: nowrap;
+  }
+  .week-block { margin-bottom: 14px; }
+  .week-title {
+    font-size: 13px; font-weight: 700; color: var(--accent);
+    margin: 4px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+  }
+  table.prog { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.prog th {
+    text-align: left; color: var(--sub); font-size: 11px; font-weight: 600;
+    padding: 4px 4px; border-bottom: 1px solid var(--border);
+  }
+  table.prog th:not(:first-child), table.prog td:not(:first-child) { text-align: center; }
+  table.prog td {
+    padding: 7px 4px; border-bottom: 1px solid var(--border);
+    color: var(--text); font-variant-numeric: tabular-nums;
+  }
+  table.prog td.day { color: var(--sub); font-weight: 600; white-space: nowrap; }
+  table.prog td.wt { color: var(--accent2); font-weight: 700; }
+  .prog-note { font-size: 11px; color: var(--sub); margin-top: 8px; line-height: 1.6; }
   .toast {
     position: fixed; left: 50%; bottom: 40px;
     transform: translateX(-50%) translateY(20px);
@@ -140,6 +173,7 @@
   <nav class="tabs">
     <button id="tabRecord" class="active">記録</button>
     <button id="tabHistory">履歴</button>
+    <button id="tabProgram">プログラム</button>
   </nav>
 </header>
 
@@ -197,6 +231,30 @@
   <!-- 履歴タブ -->
   <section id="viewHistory" class="hidden">
     <div id="histList"></div>
+  </section>
+
+  <!-- プログラムタブ -->
+  <section id="viewProgram" class="hidden">
+    <div class="card">
+      <h2>基準にする1RM</h2>
+      <div class="rm-input-row">
+        <div>
+          <label>1RM（kg）</label>
+          <input inputmode="decimal" id="progRM" placeholder="例: 100">
+        </div>
+        <button id="fillRM">履歴から取得</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>プログラムを選ぶ</h2>
+      <div class="prog-select" id="progSelect"></div>
+      <div class="prog-desc" id="progDesc"></div>
+    </div>
+
+    <div id="progOutput"></div>
+
+    <button class="btn green" id="copyProg">📋 プログラムをコピー（AI相談用）</button>
   </section>
 </main>
 
@@ -414,20 +472,175 @@ $("addSet").addEventListener("click", () => {
   sets.push({ w: last ? last.w : "", r: last ? last.r : "" });
   renderSets(); updateRM();
 });
-$("tabRecord").addEventListener("click", () => switchTab(true));
-$("tabHistory").addEventListener("click", () => switchTab(false));
-function switchTab(rec) {
-  $("viewRecord").classList.toggle("hidden", !rec);
-  $("viewHistory").classList.toggle("hidden", rec);
-  $("tabRecord").classList.toggle("active", rec);
-  $("tabHistory").classList.toggle("active", !rec);
+const TABS = { Record: "viewRecord", History: "viewHistory", Program: "viewProgram" };
+function switchTab(name) {
+  for (const [k, view] of Object.entries(TABS)) {
+    const on = k === name;
+    $(view).classList.toggle("hidden", !on);
+    $("tab" + k).classList.toggle("active", on);
+  }
+  if (name === "Program") initProgramRM();
 }
+$("tabRecord").addEventListener("click", () => switchTab("Record"));
+$("tabHistory").addEventListener("click", () => switchTab("History"));
+$("tabProgram").addEventListener("click", () => switchTab("Program"));
 $("date").addEventListener("change", updateRM);
 $("exercise").addEventListener("input", updateRM);
 $("formula").value = localStorage.getItem(FKEY) in FORMULAS ? localStorage.getItem(FKEY) : "oconner";
 $("formula").addEventListener("change", e => {
   localStorage.setItem(FKEY, e.target.value);
   renderSets(); updateRM();
+});
+
+// ---------- programs ----------
+const roundKg = x => Math.round(x / 2.5) * 2.5;
+
+const PROGRAMS = {
+  smolovjr: {
+    name: "Smolov Jr.",
+    desc: "3週間×週4日。高頻度・高ボリュームでベンチMAXを短期的に伸ばす専門プログラム。週2は+2.5kg、週3は+5kgで全セッションの重量を上げます。3週終了後は1週デロード＆測定を推奨。",
+    build(rm) {
+      const base = [
+        { day: "Day 1", pct: 70, sets: 6, reps: 6 },
+        { day: "Day 2", pct: 75, sets: 7, reps: 5 },
+        { day: "Day 3", pct: 80, sets: 8, reps: 4 },
+        { day: "Day 4", pct: 85, sets: 10, reps: 3 }
+      ];
+      const adds = [0, 2.5, 5];
+      return adds.map((add, wi) => ({
+        title: `第${wi + 1}週${add ? `（週1 +${add}kg）` : ""}`,
+        rows: base.map(b => ({
+          day: b.day, sets: b.sets, reps: b.reps, pct: b.pct,
+          weight: roundKg(rm * b.pct / 100) + add
+        }))
+      }));
+    }
+  },
+  hps: {
+    name: "HPS",
+    desc: "6週間×週3日。H(筋肥大)・P(パワー)・S(筋力)の3種の刺激を1週間の中で回す構成。フロリダ州立大の研究がベースで、平均+7〜10%のMAX向上が狙い。S日は「限界まで（AMRAP）」の全力セット。順番はH→P→Sを守るのが重要。",
+    build(rm) {
+      const pParams = w => w <= 2 ? { pct: 80, sets: 5 } : w <= 4 ? { pct: 85, sets: 4 } : { pct: 90, sets: 5 };
+      const sPct = w => [85, 87.5, 90, 90, 92.5, 95][w - 1];
+      const weeks = [];
+      for (let w = 1; w <= 6; w++) {
+        const p = pParams(w);
+        weeks.push({
+          title: `第${w}週`,
+          rows: [
+            { day: "H 筋肥大", sets: 5, reps: 8, pct: 75, weight: roundKg(rm * 0.75) },
+            { day: "P パワー", sets: p.sets, reps: 1, pct: p.pct, weight: roundKg(rm * p.pct / 100) },
+            { day: "S 筋力", sets: 3, reps: "限界", pct: sPct(w), weight: roundKg(rm * sPct(w) / 100) }
+          ]
+        });
+      }
+      return weeks;
+    }
+  }
+};
+
+let curProg = "smolovjr";
+
+function latestBenchRM() {
+  const hist = load()
+    .filter(s => s.exercise === "ベンチプレス")
+    .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
+  return hist.length ? bestOf(hist[0]) : null;
+}
+function initProgramRM() {
+  if (!$("progRM").value) {
+    const rm = latestBenchRM();
+    if (rm) $("progRM").value = fmt(rm);
+  }
+  renderProgSelect();
+  renderProgram();
+}
+function renderProgSelect() {
+  const box = $("progSelect");
+  box.innerHTML = "";
+  for (const [key, p] of Object.entries(PROGRAMS)) {
+    const b = document.createElement("button");
+    b.textContent = p.name;
+    b.className = key === curProg ? "active" : "";
+    b.addEventListener("click", () => { curProg = key; renderProgSelect(); renderProgram(); });
+    box.appendChild(b);
+  }
+  $("progDesc").textContent = PROGRAMS[curProg].desc;
+}
+function renderProgram() {
+  const out = $("progOutput");
+  const rm = parseFloat($("progRM").value);
+  if (!rm) {
+    out.innerHTML = `<div class="empty">基準1RMを入力してください</div>`;
+    return;
+  }
+  const weeks = PROGRAMS[curProg].build(rm);
+  out.innerHTML = "";
+  weeks.forEach(wk => {
+    const card = document.createElement("div");
+    card.className = "card week-block";
+    let rows = wk.rows.map(r =>
+      `<tr>
+        <td class="day">${r.day}</td>
+        <td>${r.pct}%</td>
+        <td>${r.sets}×${r.reps}</td>
+        <td class="wt">${fmt(r.weight)}kg</td>
+      </tr>`).join("");
+    card.innerHTML = `
+      <div class="week-title">${wk.title}</div>
+      <table class="prog">
+        <tr><th>日</th><th>強度</th><th>セット×回</th><th>重量</th></tr>
+        ${rows}
+      </table>`;
+    out.appendChild(card);
+  });
+  const note = document.createElement("div");
+  note.className = "prog-note";
+  note.textContent = "※重量は2.5kg刻みで丸めています。1RMは推定値なので、初週で余裕/きつすぎる場合は基準1RMを調整してください。";
+  out.appendChild(note);
+}
+function buildProgReport() {
+  const rm = parseFloat($("progRM").value);
+  if (!rm) return null;
+  const p = PROGRAMS[curProg];
+  const weeks = p.build(rm);
+  const lines = [];
+  lines.push(`【ベンチプレス プログラム】${p.name}`);
+  lines.push(`基準1RM: ${fmt(rm)}kg`);
+  lines.push("");
+  weeks.forEach(wk => {
+    lines.push(`■ ${wk.title}`);
+    wk.rows.forEach(r => {
+      lines.push(`・${r.day}: ${fmt(r.weight)}kg × ${r.reps}回 × ${r.sets}セット（${r.pct}%）`);
+    });
+    lines.push("");
+  });
+  lines.push(p.desc);
+  lines.push("");
+  lines.push("このプログラムの進め方や、私の現状（下記の直近記録）に合っているか、注意点や調整案があれば教えてください。");
+  const hist = latestBenchRM();
+  if (hist) lines.push(`（参考: 直近のベンチ推定1RM ${fmt(hist)}kg）`);
+  return lines.join("\n");
+}
+$("progRM").addEventListener("input", renderProgram);
+$("fillRM").addEventListener("click", () => {
+  const rm = latestBenchRM();
+  if (!rm) return toast("ベンチプレスの記録がまだありません");
+  $("progRM").value = fmt(rm);
+  renderProgram();
+  toast("直近の推定1RMを入れました");
+});
+$("copyProg").addEventListener("click", async () => {
+  const text = buildProgReport();
+  if (!text) return toast("基準1RMを入力してください");
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+  }
+  toast("コピーしました 📋 AIに貼り付けてください");
 });
 
 // init
