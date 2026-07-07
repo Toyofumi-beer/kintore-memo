@@ -6,6 +6,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>筋トレログ</title>
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
 <style>
   :root {
     --bg: #0f1115;
@@ -272,6 +275,10 @@
       <h2>プログラムを選ぶ</h2>
       <div class="prog-select" id="progSelect"></div>
       <div class="prog-desc" id="progDesc"></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sub);margin-top:10px;cursor:pointer">
+        <input type="checkbox" id="warmupToggle" style="width:auto;accent-color:var(--accent2)">
+        取込時にウォームアップを追加（20kg→50%→70%→85%）
+      </label>
     </div>
 
     <div id="progOutput"></div>
@@ -309,6 +316,7 @@ function fmt(n) { return (Math.round(n * 10) / 10).toFixed(1); }
 function bestOf(session) {
   let best = null;
   for (const s of session.sets) {
+    if (s.warm) continue;
     const v = e1rm(s.w, s.r);
     if (v !== null && (best === null || v > best)) best = v;
   }
@@ -319,15 +327,18 @@ function bestOf(session) {
 function renderSets() {
   const box = $("sets");
   box.innerHTML = "";
+  let workNo = 0;
   sets.forEach((s, i) => {
     const row = document.createElement("div");
     row.className = "set-row";
-    const rm = e1rm(s.w, s.r);
+    const rm = s.warm ? null : e1rm(s.w, s.r);
+    const num = s.warm ? "W" : ++workNo;
+    const rmTxt = s.warm ? "アップ" : (rm ? fmt(rm) + "kg" : "");
     row.innerHTML = `
-      <div class="set-num">${i + 1}</div>
+      <div class="set-num">${num}</div>
       <input inputmode="decimal" placeholder="kg" value="${s.w}" data-i="${i}" data-k="w">
       <input inputmode="numeric" placeholder="回" value="${s.r}" data-i="${i}" data-k="r">
-      <div class="set-rm">${rm ? fmt(rm) + "kg" : ""}</div>
+      <div class="set-rm"${s.warm ? ' style="color:var(--sub)"' : ""}>${rmTxt}</div>
       <button class="del-set" data-del="${i}">×</button>`;
     box.appendChild(row);
   });
@@ -335,8 +346,10 @@ function renderSets() {
     el.addEventListener("input", e => {
       sets[e.target.dataset.i][e.target.dataset.k] = e.target.value;
       updateRM();
-      e.target.closest(".set-row").querySelector(".set-rm").textContent =
-        (() => { const s = sets[e.target.dataset.i]; const v = e1rm(s.w, s.r); return v ? fmt(v) + "kg" : ""; })();
+      const s = sets[e.target.dataset.i];
+      if (s.warm) return;
+      const v = e1rm(s.w, s.r);
+      e.target.closest(".set-row").querySelector(".set-rm").textContent = v ? fmt(v) + "kg" : "";
     });
   });
   box.querySelectorAll("[data-del]").forEach(el => {
@@ -406,9 +419,14 @@ function buildReport() {
   lines.push(`【筋トレ報告】${s.date} ${s.exercise}`);
   lines.push("");
   lines.push("■ 本日のセット");
-  s.sets.forEach((x, i) => {
-    const v = e1rm(x.w, x.r);
-    lines.push(`${i + 1}. ${x.w}kg × ${x.r}回（e1RM ${fmt(v)}kg）`);
+  let n = 0;
+  s.sets.forEach(x => {
+    if (x.warm) {
+      lines.push(`アップ: ${x.w}kg × ${x.r}回`);
+    } else {
+      const v = e1rm(x.w, x.r);
+      lines.push(`${++n}. ${x.w}kg × ${x.r}回（e1RM ${fmt(v)}kg）`);
+    }
   });
   lines.push("");
   lines.push(`■ 本日ベスト推定1RM: ${fmt(best)}kg（${formula().name}式）`);
@@ -604,11 +622,20 @@ function renderProgSelect() {
   }
   $("progDesc").textContent = PROGRAMS[curProg].desc;
 }
+const WKEY = "kintore-warmup";
+function warmupFor(work) {
+  const list = [{ w: 20, r: 10 }];
+  [[0.5, 5], [0.7, 3], [0.85, 1]].forEach(([p, r]) => {
+    const w = roundKg(work * p);
+    if (w > 20 && w < work && !list.some(x => x.w === w)) list.push({ w, r });
+  });
+  return list.filter(x => x.w < work).map(x => ({ w: String(x.w), r: String(x.r), warm: true }));
+}
 function loadIntoRecord(weight, reps, setCount, label) {
   $("date").value = new Date().toLocaleDateString("sv-SE");
   $("exercise").value = "ベンチプレス";
   const r = reps === "限界" || reps === "" ? "" : String(reps);
-  sets = [];
+  sets = $("warmupToggle").checked ? warmupFor(weight) : [];
   for (let i = 0; i < setCount; i++) sets.push({ w: String(weight), r });
   $("memo").value = "📋 " + label;
   renderSets();
@@ -749,6 +776,8 @@ function buildProgReport() {
   if (hist) lines.push(`（参考: 直近のベンチ推定1RM ${fmt(hist)}kg）`);
   return lines.join("\n");
 }
+$("warmupToggle").checked = localStorage.getItem(WKEY) !== "0";
+$("warmupToggle").addEventListener("change", e => localStorage.setItem(WKEY, e.target.checked ? "1" : "0"));
 $("progRM").addEventListener("input", renderProgram);
 $("fillRM").addEventListener("click", () => {
   const rm = latestBenchRM();
@@ -775,6 +804,9 @@ $("date").value = new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD (local)
 renderSets();
 updateRM();
 renderHistory();
+
+// offline (PWA)
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
 </script>
 </body>
 </html>
