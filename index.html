@@ -154,6 +154,28 @@
   table.prog td.day { color: var(--sub); font-weight: 600; white-space: nowrap; }
   table.prog td.wt { color: var(--accent2); font-weight: 700; }
   .prog-note { font-size: 11px; color: var(--sub); margin-top: 8px; line-height: 1.6; }
+  table.prog td.load { text-align: right; padding-right: 0; }
+  .load-btn {
+    border: 1px solid var(--accent); background: transparent; color: var(--accent);
+    font-size: 11px; font-weight: 700; padding: 5px 8px; border-radius: 8px; white-space: nowrap;
+  }
+  .load-btn:active { background: var(--accent); color: #fff; }
+  .cycle-target { text-align: center; padding: 6px 0 2px; }
+  .cycle-target .wt { font-size: 30px; font-weight: 800; color: var(--accent2); }
+  .cycle-target .sub { font-size: 14px; color: var(--sub); margin-left: 6px; }
+  .cycle-ctl { display: flex; gap: 8px; margin: 12px 0 4px; }
+  .cycle-ctl button {
+    flex: 1; border: 1px solid var(--border); background: var(--card2); color: var(--text);
+    font-size: 14px; font-weight: 700; padding: 11px 4px; border-radius: 10px;
+  }
+  .rep-tabs { display: flex; gap: 8px; margin-top: 10px; }
+  .rep-tabs button {
+    flex: 1; border: 1px solid var(--border); background: var(--card2); color: var(--sub);
+    font-size: 14px; font-weight: 700; padding: 10px 4px; border-radius: 10px;
+  }
+  .rep-tabs button.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  .phase-list { font-size: 12px; color: var(--sub); line-height: 1.9; }
+  .phase-list b { color: var(--text); }
   .toast {
     position: fixed; left: 50%; bottom: 40px;
     transform: translateX(-50%) translateY(20px);
@@ -536,8 +558,23 @@ const PROGRAMS = {
       }
       return weeks;
     }
+  },
+  t1085: {
+    name: "10/8/5",
+    cycle: true,
+    desc: "週3回以上・週15セットが目安。同じレップ数で5セットを回し、全セット成功したら次回+2.5kg。そのレップ数を維持できなくなったら 10→8→5 と1段階下げて継続。9割以上がMAX更新した王道の漸進プログラム。",
+    startWeight(rm) { return Math.max(20, roundKg(rm * 0.70) - 10); }
   }
 };
+
+const T1085KEY = "kintore-1085-state";
+function get1085(rm) {
+  let st = null;
+  try { st = JSON.parse(localStorage.getItem(T1085KEY)); } catch {}
+  if (!st || typeof st.weight !== "number") st = { weight: PROGRAMS.t1085.startWeight(rm || 100), reps: 10 };
+  return st;
+}
+function set1085(st) { localStorage.setItem(T1085KEY, JSON.stringify(st)); }
 
 let curProg = "smolovjr";
 
@@ -567,47 +604,137 @@ function renderProgSelect() {
   }
   $("progDesc").textContent = PROGRAMS[curProg].desc;
 }
+function loadIntoRecord(weight, reps, setCount, label) {
+  $("date").value = new Date().toLocaleDateString("sv-SE");
+  $("exercise").value = "ベンチプレス";
+  const r = reps === "限界" || reps === "" ? "" : String(reps);
+  sets = [];
+  for (let i = 0; i < setCount; i++) sets.push({ w: String(weight), r });
+  $("memo").value = "📋 " + label;
+  renderSets();
+  updateRM();
+  switchTab("Record");
+  window.scrollTo(0, 0);
+  toast("記録に取り込みました。実績に直して保存を💪");
+}
+
 function renderProgram() {
   const out = $("progOutput");
   const rm = parseFloat($("progRM").value);
+  $("copyProg").style.display = "";
   if (!rm) {
     out.innerHTML = `<div class="empty">基準1RMを入力してください</div>`;
     return;
   }
-  const weeks = PROGRAMS[curProg].build(rm);
+  if (PROGRAMS[curProg].cycle) return renderCycle(rm);
+  const p = PROGRAMS[curProg];
+  const weeks = p.build(rm);
   out.innerHTML = "";
   weeks.forEach(wk => {
     const card = document.createElement("div");
     card.className = "card week-block";
-    let rows = wk.rows.map(r =>
-      `<tr>
+    const table = document.createElement("table");
+    table.className = "prog";
+    table.innerHTML = `<tr><th>日</th><th>強度</th><th>セット×回</th><th>重量</th><th></th></tr>`;
+    wk.rows.forEach(r => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
         <td class="day">${r.day}</td>
         <td>${r.pct}%</td>
         <td>${r.sets}×${r.reps}</td>
         <td class="wt">${fmt(r.weight)}kg</td>
-      </tr>`).join("");
-    card.innerHTML = `
-      <div class="week-title">${wk.title}</div>
-      <table class="prog">
-        <tr><th>日</th><th>強度</th><th>セット×回</th><th>重量</th></tr>
-        ${rows}
-      </table>`;
+        <td class="load"><button class="load-btn">取込</button></td>`;
+      tr.querySelector(".load-btn").addEventListener("click", () =>
+        loadIntoRecord(r.weight, r.reps, r.sets, `${p.name} ${wk.title} ${r.day}（${r.pct}%）`));
+      table.appendChild(tr);
+    });
+    card.innerHTML = `<div class="week-title">${wk.title}</div>`;
+    card.appendChild(table);
     out.appendChild(card);
   });
   const note = document.createElement("div");
   note.className = "prog-note";
-  note.textContent = "※重量は2.5kg刻みで丸めています。1RMは推定値なので、初週で余裕/きつすぎる場合は基準1RMを調整してください。";
+  note.textContent = "※「取込」でその日のメニューを記録タブに読み込めます。実際の回数に直してから保存してください。重量は2.5kg刻みで丸めています。";
   out.appendChild(note);
+}
+
+function renderCycle(rm) {
+  const out = $("progOutput");
+  const p = PROGRAMS[curProg];
+  const st = get1085(rm);
+  const start = p.startWeight(rm);
+  out.innerHTML = "";
+
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+    <h2>今日のターゲット</h2>
+    <div class="cycle-target">
+      <span class="wt">${fmt(st.weight)}kg</span>
+      <span class="sub">× ${st.reps}回 × 5セット</span>
+    </div>
+    <div class="cycle-ctl">
+      <button id="wDown">− 2.5kg</button>
+      <button id="wUp">＋ 2.5kg</button>
+    </div>
+    <div class="rep-tabs">
+      <button data-r="10" class="${st.reps === 10 ? "active" : ""}">10回</button>
+      <button data-r="8" class="${st.reps === 8 ? "active" : ""}">8回</button>
+      <button data-r="5" class="${st.reps === 5 ? "active" : ""}">5回</button>
+    </div>`;
+  out.appendChild(card);
+
+  const btn = document.createElement("button");
+  btn.className = "btn primary";
+  btn.textContent = "▶ この内容を記録に取り込む";
+  btn.style.marginBottom = "14px";
+  btn.addEventListener("click", () =>
+    loadIntoRecord(st.weight, st.reps, 5, `10/8/5 ${st.weight}kg×${st.reps}回`));
+  out.appendChild(btn);
+
+  const guide = document.createElement("div");
+  guide.className = "card";
+  guide.innerHTML = `
+    <h2>進め方</h2>
+    <div class="phase-list">
+      推奨スタート重量: <b>${fmt(start)}kg</b>（10回5セットがギリギリの重量−10kgの目安）<br>
+      ① <b>10回×5セット</b> 全セット成功 → 次回 <b>+2.5kg</b><br>
+      ② 10回を維持できなくなったら <b>8回×5セット</b> に移行して継続<br>
+      ③ さらに詰まったら <b>5回×5セット</b> に移行<br>
+      頻度は週3回以上・週15セットが目安です。
+    </div>`;
+  out.appendChild(guide);
+
+  card.querySelector("#wDown").addEventListener("click", () => {
+    st.weight = Math.max(20, st.weight - 2.5); set1085(st); renderCycle(rm);
+  });
+  card.querySelector("#wUp").addEventListener("click", () => {
+    st.weight += 2.5; set1085(st); renderCycle(rm);
+  });
+  card.querySelectorAll(".rep-tabs button").forEach(b =>
+    b.addEventListener("click", () => { st.reps = Number(b.dataset.r); set1085(st); renderCycle(rm); }));
 }
 function buildProgReport() {
   const rm = parseFloat($("progRM").value);
   if (!rm) return null;
   const p = PROGRAMS[curProg];
-  const weeks = p.build(rm);
   const lines = [];
   lines.push(`【ベンチプレス プログラム】${p.name}`);
   lines.push(`基準1RM: ${fmt(rm)}kg`);
   lines.push("");
+  if (p.cycle) {
+    const st = get1085(rm);
+    lines.push(`推奨スタート重量: ${fmt(p.startWeight(rm))}kg`);
+    lines.push(`今日のターゲット: ${fmt(st.weight)}kg × ${st.reps}回 × 5セット`);
+    lines.push("");
+    lines.push(p.desc);
+    lines.push("");
+    lines.push("このプログラムの進め方や、私の現状に合っているか、注意点や調整案があれば教えてください。");
+    const h = latestBenchRM();
+    if (h) lines.push(`（参考: 直近のベンチ推定1RM ${fmt(h)}kg）`);
+    return lines.join("\n");
+  }
+  const weeks = p.build(rm);
   weeks.forEach(wk => {
     lines.push(`■ ${wk.title}`);
     wk.rows.forEach(r => {
