@@ -198,6 +198,13 @@
     transition: all .25s;
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #saveStatus {
+    text-align: center; font-size: 12px; color: var(--accent2);
+    min-height: 16px; margin-top: 10px;
+    opacity: 0; transition: opacity .3s;
+  }
+  .hist-item { cursor: pointer; }
+  .hist-hint { font-size: 11px; color: var(--sub); margin: 2px 4px 10px; }
   .hidden { display: none; }
 </style>
 </head>
@@ -258,7 +265,8 @@
       <textarea id="memo" rows="2" placeholder="調子、フォームの気づきなど"></textarea>
     </div>
 
-    <button class="btn primary" id="save">この内容で保存</button>
+    <div id="saveStatus"></div>
+    <button class="btn" id="newRec">✚ 新しい記録を始める</button>
     <button class="btn green" id="copy">📋 AI報告用テキストをコピー</button>
   </section>
 
@@ -286,7 +294,7 @@
       <div class="prog-desc" id="progDesc"></div>
       <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sub);margin-top:10px;cursor:pointer">
         <input type="checkbox" id="warmupToggle">
-        取込時にウォームアップを追加（20kg→50%→70%→85%）
+        取込時にウォームアップを追加（20kg→50%→70%→87.5%）
       </label>
     </div>
 
@@ -354,7 +362,9 @@ function renderSets() {
   box.querySelectorAll("input").forEach(el => {
     el.addEventListener("input", e => {
       sets[e.target.dataset.i][e.target.dataset.k] = e.target.value;
+      progLoaded = false;
       updateRM();
+      autoSave();
       const s = sets[e.target.dataset.i];
       if (s.warm) return;
       const v = e1rm(s.w, s.r);
@@ -365,7 +375,7 @@ function renderSets() {
     el.addEventListener("click", e => {
       sets.splice(e.target.dataset.del, 1);
       if (!sets.length) sets = [{ w: "", r: "" }];
-      renderSets(); updateRM();
+      renderSets(); updateRM(); autoSave();
     });
   });
 }
@@ -399,24 +409,69 @@ function updateRM() {
   }
 }
 
-// ---------- save ----------
+// ---------- save (auto) ----------
+let curId = null;        // 編集中セッションのid（nullなら未作成）
+let progLoaded = false;  // 直前の操作がプログラム取込かどうか
+
 function currentSession() {
   return {
-    id: Date.now(),
     date: $("date").value,
     exercise: $("exercise").value.trim() || "ベンチプレス",
     sets: sets.filter(s => parseFloat(s.w) && parseInt(s.r)),
     memo: $("memo").value.trim()
   };
 }
-$("save").addEventListener("click", () => {
-  const s = currentSession();
-  if (!s.sets.length) return toast("セットを入力してください");
-  const all = load();
-  all.push(s);
-  store(all);
-  toast("保存しました 💪");
-  renderHistory();
+let saveTimer = null;
+function autoSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const s = currentSession();
+    if (!s.sets.length) return;
+    const all = load();
+    if (curId !== null) {
+      const i = all.findIndex(x => x.id === curId);
+      if (i >= 0) all[i] = { id: curId, ...s };
+      else { curId = Date.now(); all.push({ id: curId, ...s }); }
+    } else {
+      curId = Date.now();
+      all.push({ id: curId, ...s });
+    }
+    store(all);
+    renderHistory();
+    showSaved();
+  }, 600);
+}
+function showSaved() {
+  const el = $("saveStatus");
+  el.textContent = "✓ 自動保存しました";
+  el.style.opacity = 1;
+  clearTimeout(el._h);
+  el._h = setTimeout(() => { el.style.opacity = 0; }, 1800);
+}
+function loadSession(s, notify = true) {
+  curId = s.id;
+  progLoaded = false;
+  $("date").value = s.date;
+  $("exercise").value = s.exercise;
+  $("memo").value = s.memo || "";
+  sets = s.sets.length ? s.sets.map(x => ({ ...x })) : [{ w: "", r: "" }];
+  renderSets();
+  updateRM();
+  if (notify) {
+    switchTab("Record");
+    window.scrollTo(0, 0);
+    toast("記録を開きました ✏️ 編集は自動保存されます");
+  }
+}
+$("newRec").addEventListener("click", () => {
+  curId = null;
+  progLoaded = false;
+  $("date").value = new Date().toLocaleDateString("sv-SE");
+  $("memo").value = "";
+  sets = [{ w: "", r: "" }];
+  renderSets();
+  updateRM();
+  toast("新しい記録を開始しました");
 });
 
 // ---------- report ----------
@@ -485,24 +540,31 @@ function renderHistory() {
     box.innerHTML = `<div class="empty">まだ記録がありません</div>`;
     return;
   }
-  box.innerHTML = "";
+  box.innerHTML = `<div class="hist-hint">タップすると記録を開いて編集できます（編集は自動保存）</div>`;
   all.forEach(s => {
     const div = document.createElement("div");
     div.className = "hist-item";
-    const setsTxt = s.sets.map(x => `${x.w}kg×${x.r}`).join("、");
+    const best = bestOf(s);
+    const setsTxt = s.sets.map(x => `${x.warm ? "🔸" : ""}${x.w}kg×${x.r}`).join("、");
     div.innerHTML = `
       <div class="hist-head">
         <span class="hist-date">${s.date}　${s.exercise}</span>
-        <span class="hist-rm">e1RM ${fmt(bestOf(s))}kg</span>
+        <span class="hist-rm">${best ? "e1RM " + fmt(best) + "kg" : ""}</span>
       </div>
       <div class="hist-sets">${setsTxt}${s.memo ? "<br>📝 " + s.memo : ""}</div>
       <button class="hist-del" data-id="${s.id}">削除</button>`;
+    div.addEventListener("click", e => {
+      if (e.target.closest(".hist-del")) return;
+      loadSession(s);
+    });
     box.appendChild(div);
   });
   box.querySelectorAll(".hist-del").forEach(el => {
     el.addEventListener("click", e => {
       if (!confirm("この記録を削除しますか？")) return;
-      store(load().filter(x => x.id !== Number(e.target.dataset.id)));
+      const id = Number(e.target.dataset.id);
+      store(load().filter(x => x.id !== id));
+      if (curId === id) curId = null;
       renderHistory(); updateRM();
     });
   });
@@ -519,8 +581,9 @@ function toast(msg) {
 $("addSet").addEventListener("click", () => {
   const last = sets[sets.length - 1];
   sets.push({ w: last ? last.w : "", r: last ? last.r : "" });
-  renderSets(); updateRM();
+  renderSets(); updateRM(); autoSave();
 });
+$("memo").addEventListener("input", () => { progLoaded = false; autoSave(); });
 const TABS = { Record: "viewRecord", History: "viewHistory", Program: "viewProgram" };
 function switchTab(name) {
   for (const [k, view] of Object.entries(TABS)) {
@@ -533,8 +596,8 @@ function switchTab(name) {
 $("tabRecord").addEventListener("click", () => switchTab("Record"));
 $("tabHistory").addEventListener("click", () => switchTab("History"));
 $("tabProgram").addEventListener("click", () => switchTab("Program"));
-$("date").addEventListener("change", updateRM);
-$("exercise").addEventListener("input", updateRM);
+$("date").addEventListener("change", () => { updateRM(); autoSave(); });
+$("exercise").addEventListener("input", () => { updateRM(); autoSave(); });
 $("formula").value = localStorage.getItem(FKEY) in FORMULAS ? localStorage.getItem(FKEY) : "oconner";
 $("formula").addEventListener("change", e => {
   localStorage.setItem(FKEY, e.target.value);
@@ -634,13 +697,16 @@ function renderProgSelect() {
 const WKEY = "kintore-warmup";
 function warmupFor(work) {
   const list = [{ w: 20, r: 10 }];
-  [[0.5, 5], [0.7, 3], [0.85, 1]].forEach(([p, r]) => {
+  [[0.5, 5], [0.7, 3], [0.875, 1]].forEach(([p, r]) => {
     const w = roundKg(work * p);
     if (w > 20 && w < work && !list.some(x => x.w === w)) list.push({ w, r });
   });
   return list.filter(x => x.w < work).map(x => ({ w: String(x.w), r: String(x.r), warm: true }));
 }
 function loadIntoRecord(weight, reps, setCount, label) {
+  // 直前も取込なら同じ記録を上書き（連続取込で重複を作らない）
+  if (!(progLoaded && curId !== null)) curId = null;
+  progLoaded = true;
   $("date").value = new Date().toLocaleDateString("sv-SE");
   $("exercise").value = "ベンチプレス";
   const r = reps === "限界" || reps === "" ? "" : String(reps);
@@ -649,9 +715,10 @@ function loadIntoRecord(weight, reps, setCount, label) {
   $("memo").value = "📋 " + label;
   renderSets();
   updateRM();
+  autoSave();
   switchTab("Record");
   window.scrollTo(0, 0);
-  toast("記録に取り込みました。実績に直して保存を💪");
+  toast("取り込んで保存しました。実績に合わせて修正OK💪");
 }
 
 function renderProgram() {
@@ -690,7 +757,7 @@ function renderProgram() {
   });
   const note = document.createElement("div");
   note.className = "prog-note";
-  note.textContent = "※「取込」でその日のメニューを記録タブに読み込めます。実際の回数に直してから保存してください。重量は2.5kg刻みで丸めています。";
+  note.textContent = "※「取込」でその日のメニューが記録タブに入り自動保存されます。トレーニング中に実際の回数へ直せばそのまま反映されます。重量は2.5kg刻みで丸めています。";
   out.appendChild(note);
 }
 
@@ -813,6 +880,12 @@ $("date").value = new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD (local)
 renderSets();
 updateRM();
 renderHistory();
+// 今日の記録があれば続きから編集できるように開いておく
+(() => {
+  const today = new Date().toLocaleDateString("sv-SE");
+  const todays = load().filter(s => s.date === today).sort((a, b) => b.id - a.id);
+  if (todays.length) loadSession(todays[0], false);
+})();
 
 // offline (PWA)
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
